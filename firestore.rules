@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global fallback deny-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Strict profile validation
+    function isValidUserProfile(user) {
+      return user.uid == request.auth.uid
+        && (user.email == null || (user.email is string && user.email.size() <= 128))
+        && (user.displayName == null || (user.displayName is string && user.displayName.size() <= 128));
+    }
+
+    // Strict issue validation
+    function isValidIssue(issue) {
+      return issue.id is string
+        && issue.title is string && issue.title.size() <= 100
+        && issue.category in ['Potholes', 'Road Damage', 'Water Leakage', 'Waste Management Issues', 'Garbage Accumulation', 'Broken Streetlights', 'Fallen Trees', 'Open Manholes', 'Flooding', 'Traffic Signal Issues', 'Public Safety Hazards', 'Damaged Public Infrastructure', 'Construction Hazards', 'Other']
+        && issue.severity in ['Low', 'Medium', 'High', 'Critical']
+        && issue.status in ['Reported', 'Under Verification', 'Verified', 'Escalated', 'Repair In Progress', 'Pending Resolution Review', 'Resolved']
+        && (issue.latitude is int || issue.latitude is float)
+        && (issue.longitude is int || issue.longitude is float)
+        && issue.creatorId is string
+        && issue.creatorName is string;
+    }
+
+    // Matches
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow create, update: if isOwner(userId) && isValidUserProfile(request.resource.data);
+      allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /issues/{issueId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(issueId) && isValidIssue(request.resource.data) && request.resource.data.creatorId == request.auth.uid;
+      allow update: if isSignedIn() && isValidId(issueId) && isValidIssue(request.resource.data);
+      allow delete: if false; // Issues cannot be deleted for audit transparency
+    }
+
+    match /missions/{missionId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(missionId);
+      allow delete: if false;
+    }
+  }
+}
